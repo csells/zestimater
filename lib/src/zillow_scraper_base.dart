@@ -367,6 +367,28 @@ T? _findFirstValueByKeys<T>(dynamic json, List<String> keys) {
   return result;
 }
 
+/// Attempts to extract a numeric value from various formats:
+/// - Direct number
+/// - Map with 'amount' or 'value' key
+/// - String that can be parsed as a number
+num? _extractNumericValue(dynamic value) {
+  if (value is num) return value;
+
+  if (value is Map) {
+    final amount = value['amount'] ?? value['value'];
+    if (amount is num) return amount;
+    if (amount is String) {
+      return num.tryParse(amount.replaceAll(RegExp(r'[^\d.]'), ''));
+    }
+  }
+
+  if (value is String) {
+    return num.tryParse(value.replaceAll(RegExp(r'[^\d.]'), ''));
+  }
+
+  return null;
+}
+
 num? _findZestimateInJson(dynamic json) {
   if (json == null) return null;
 
@@ -375,34 +397,13 @@ num? _findZestimateInJson(dynamic json) {
     if (candidate != null) return;
 
     if (node is Map<String, dynamic>) {
-      // Direct key - try 'zestimate' first, then 'price'
-      // Zillow sometimes stores zestimate as 'price' in __NEXT_DATA__
+      // Try common keys: 'zestimate' or 'price'
       for (final key in ['zestimate', 'price']) {
         if (node.containsKey(key)) {
-          final v = node[key];
-          if (v is num) {
-            candidate = v;
+          final extracted = _extractNumericValue(node[key]);
+          if (extracted != null) {
+            candidate = extracted;
             return;
-          } else if (v is Map) {
-            final amount = v['amount'] ?? v['value'];
-            if (amount is num) {
-              candidate = amount;
-              return;
-            } else if (amount is String) {
-              final parsed = num.tryParse(
-                amount.replaceAll(RegExp(r'[^\d.]'), ''),
-              );
-              if (parsed != null) {
-                candidate = parsed;
-                return;
-              }
-            }
-          } else if (v is String) {
-            final parsed = num.tryParse(v.replaceAll(RegExp(r'[^\d.]'), ''));
-            if (parsed != null) {
-              candidate = parsed;
-              return;
-            }
           }
         }
       }
@@ -430,7 +431,7 @@ Map<String, dynamic>? _safeDecode(String raw) {
       // Not expected but normalize
       return first.first as Map<String, dynamic>;
     }
-  } catch (_) {
+  } catch (e) {
     // Try stripping comment wrappers if any left
     try {
       final cleaned = raw
@@ -440,7 +441,9 @@ Map<String, dynamic>? _safeDecode(String raw) {
       dynamic decoded = jsonDecode(cleaned);
       if (decoded is String) decoded = jsonDecode(decoded);
       if (decoded is Map<String, dynamic>) return decoded;
-    } catch (_) {}
+    } catch (e2) {
+      stderr.writeln('Failed to decode JSON: $e2');
+    }
   }
   return null;
 }
@@ -452,8 +455,8 @@ List<Map<String, dynamic>> _safeDecodePossiblyArray(String raw) {
     if (decoded is List) {
       return decoded.whereType<Map<String, dynamic>>().toList();
     }
-  } catch (_) {
-    // ignore
+  } catch (e) {
+    stderr.writeln('Failed to decode JSON-LD: $e');
   }
   return const [];
 }
